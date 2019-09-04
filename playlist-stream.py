@@ -5,11 +5,15 @@ import logging.config
 import os
 import datetime
 import time
+import sys
+import re
+import YoutubeCommentsDownloader
+import json
 from unidecode import unidecode
 
 class PlaylistStream:
 
-    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\n\nCommand: "
+    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\nt: Search for timestamps\n\nCommand: "
     logger = None
 
     def __init__(self):
@@ -51,32 +55,45 @@ class PlaylistStream:
         title = self.utils.remove_non_ascii(video['title'])
         uploader = self.utils.remove_non_ascii(video['uploader'])
         duration = self.utils.convert_time(video['duration'])
+        video_id = result['entries'][0]
 
         for video_format in video['formats']:
             if video_format['format_id'] == '140':
                 # 140 is m4a audio format.
                 url = video_format['url']
-                audio_data = AudioData(title,uploader,description,duration,url)
+                audio_data = AudioData(title,uploader,description,duration,url,video_id)
                 return audio_data
 
         return None
 
-
 class AudioData:
 
-    def __init__(self,title,uploader,description,duration,url):
+    def __init__(self,title,uploader,description,duration,url,video_id):
 
         self.title = title
         self.uploader = uploader
         self.description = description
         self.duration = duration
         self.url = url
+        self.video_id = video_id
+        return
+
+class Timestamp:
+
+    def __init__(self,time,description):
+        self.time = time
+        self.description = description
+        return
+
 
 
 class Utils:
 
     def convert_time(self,seconds):
         return str(datetime.timedelta(seconds=seconds))
+    
+    def convert_time_ms(self,milliseconds):
+        return str(datetime.timedelta(milliseconds=milliseconds))
     
     def clear_screen(self): 
         # Windows clear screen
@@ -90,10 +107,31 @@ class Utils:
     def remove_non_ascii(self,text):
         return unidecode(str(text))
 
+    def search_for_timestamps(self,video_id):
 
-def main():
+        timestamps = []
+        comments_downloader = YoutubeCommentsDownloader.Downloader()
+        comments = comments_downloader.get_comments(video_id)
 
-    parser = argparse.ArgumentParser("playlist-stream")
+        print(comments)
+
+        # author, comment = json.loads(comments)
+
+        # maybe_timestamps = re.findall(r'\d{1,2}(:\d{1,2})(:\d{1,2})?\s+\W?.+',comment)
+
+        # for maybe_timestamp in maybe_timestamps:
+
+        #     print(maybe_timestamp)
+
+
+        # # \d{1,2}(:\d{1,2})(:\d{1,2})?\s+\W?.+
+
+        return timestamps
+
+
+def main(argv):
+
+    parser = argparse.ArgumentParser(argv)
     parser.add_argument("-p", help="The youtube playlist URL", type=str)
     parser.add_argument("-s", help="Starting index (play videos after this number)", type=int)
     parser.add_argument("-e", help="Ending index (play videos before this number)", type=int)
@@ -168,38 +206,72 @@ def main():
                 else:
                     player.pause()
                     ps.logger.info("Player unpaused")
-            if selection in ('s','S'):
+            elif selection in ('s','S'):
                 # Stop the player and closes the script
                 player.stop()
                 ps.logger.info("Player stopped!")
-                exit()
-            if selection in ('n','N'):
+                sys.exit()
+            elif selection in ('n','N'):
                 # Next track (stop the player and skip this iteration)
                 player.pause()
                 break
-            if selection in ('d','D'):
+            elif selection in ('d','D'):
                 ps.logger.debug(data.description)
-            if selection == '++':
+            elif selection == '++':
                 player.audio_set_volume(player.audio_get_volume() + 10)
                 ps.logger.info(f"Volume +10 [{player.audio_get_volume()}]")
-            if selection == '+':
+            elif selection == '+':
                 player.audio_set_volume(player.audio_get_volume() + 1)
                 ps.logger.info(f"Volume +1 [{player.audio_get_volume()}]")
-            if selection == '--':
+            elif selection == '--':
                 player.audio_set_volume(player.audio_get_volume() - 10)
                 ps.logger.info(f"Volume -10 [{player.audio_get_volume()}]")
-            if selection == '-':
+            elif selection == '-':
                 player.audio_set_volume(player.audio_get_volume() - 1)
                 ps.logger.info(f"Volume -1 [{player.audio_get_volume()}]")
+            elif selection in ('c','C'):
+                # Display current status (current track, time)
+                # Is it paused/stopped?
+                status = 'Playing' if player.is_playing() else 'Paused/Stopped'
+                elapsed = ps.utils.convert_time_ms(player.get_time())
+                print(f"\n{status} {data.title}\n")
+                print(f"{elapsed} / {data.duration}\n")
+                time.sleep(1)
+            elif selection == '>':
+                # Seek forward 10 seconds
+                player.set_time(player.get_time() + 10000)
+            elif selection == '>>':
+                # Seek forward 1 minute
+                player.set_time(player.get_time() + 60000)
+            elif selection == '<':
+                # Seek backwards 10 seconds
+                player.set_time(player.get_time() - 10000)
+            elif selection == '<<':
+                # Seek backwards 1 minute
+                player.set_time(player.get_time() - 60000)
+            elif selection == 't':
+                # Shows timestamps
+
+                # comments_downloader = YoutubeCommentsDownloader.Downloader()
+                # comments = comments_downloader.get_comments('y8F1Poye3BI')
+                #  ps.utils.search_for_timestamps(data.video_id)
+                # ps.logger.info(comments)
+
+                ps.logger.debug("[WIP]")
+
+                time.sleep(3)
+            else:
+                ps.logger.info(f"Unknown command {selection}")
             pass
 
     # If we are out of this loop the playlist is over.
     logging.info("That was the last track. Stopping")
     player.stop()
+    sys.exit()
     return
 
     
 
 if __name__ == "__main__":
 
-    main()
+    main(sys.argv[1:])
