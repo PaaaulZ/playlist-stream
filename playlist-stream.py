@@ -13,7 +13,7 @@ from unidecode import unidecode
 
 class PlaylistStream:
 
-    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\nt: Search for timestamps\n\nCommand: "
+    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\nt: Search for timestamps\ntu: Seek to timestamp (posted by uploader in the comments)\ntd: Seek to timestamp (posted by uploader in the video description)\ntc: Seek to timestamp (posted by users in the comments)\n\nCommand: "
     logger = None
 
     def __init__(self):
@@ -55,7 +55,7 @@ class PlaylistStream:
         title = self.utils.remove_non_ascii(video['title'])
         uploader = self.utils.remove_non_ascii(video['uploader'])
         duration = self.utils.convert_time(video['duration'])
-        video_id = result['entries'][0]
+        video_id = video['id']
 
         for video_format in video['formats']:
             if video_format['format_id'] == '140':
@@ -107,26 +107,98 @@ class Utils:
     def remove_non_ascii(self,text):
         return unidecode(str(text))
 
-    def search_for_timestamps(self,video_id):
+    def search_for_timestamps_comments(self,video_id,video_uploader,by_uploader=True):
+
+        """Searches for timestamps in the comments. If by_uploader = True accepts only timestamps posted by the video uploader"""
+
+        TIME_INDEX = 0
+        DESCRIPTION_INDEX = 1
 
         timestamps = []
         comments_downloader = YoutubeCommentsDownloader.Downloader()
         comments = comments_downloader.get_comments(video_id)
 
-        print(comments)
+        for comment_string in comments:
+            comment = json.loads(comment_string)
+            author = comment['author']
+            text = comment['text']
 
-        # author, comment = json.loads(comments)
+            # If author is video_uploader timestamps are trusted.
 
-        # maybe_timestamps = re.findall(r'\d{1,2}(:\d{1,2})(:\d{1,2})?\s+\W?.+',comment)
+            # Finds timestamp with the following formats 
+            # hh:mm:ss description 
+            # or
+            # (mm:ss description)
 
-        # for maybe_timestamp in maybe_timestamps:
+            maybe_timestamps = re.findall(r'((?:(?:\d+:)?\d+)?:\d+)\s?(.+)\n?',text)
 
-        #     print(maybe_timestamp)
-
-
-        # # \d{1,2}(:\d{1,2})(:\d{1,2})?\s+\W?.+
+            if len(maybe_timestamps) > 2:
+                # Found timestamps (more than 2 just to be sure they are timestamps)
+                # Are they trusted? Do I care?
+                if by_uploader:
+                    # We only want timestamps from vide_uploader
+                    if author == video_uploader:
+                        for maybe_timestamp in maybe_timestamps:
+                            timestamps.append(Timestamp(maybe_timestamp[TIME_INDEX],maybe_timestamp[DESCRIPTION_INDEX]))
+                else:
+                    # We only want timestamps from other users
+                    if author != video_uploader:
+                        print(f"{author} --- {by_uploader}")
+                        for maybe_timestamp in maybe_timestamps:
+                                timestamps.append(Timestamp(maybe_timestamp[TIME_INDEX],maybe_timestamp[DESCRIPTION_INDEX]))
 
         return timestamps
+
+    def search_for_timestamps_description(self,video_description):
+
+        """Searches for timestamps in the video description."""
+
+        TIME_INDEX = 0
+        DESCRIPTION_INDEX = 1
+
+        # Finds timestamp with the following formats 
+        # hh:mm:ss description 
+        # or
+        # (mm:ss description)
+
+        timestamps = []
+        maybe_timestamps = re.findall(r'((?:(?:\d+:)?\d+)?:\d+)\s?(.+)\n?',video_description)
+
+        if len(maybe_timestamps) > 2:
+            # Found timestamps (more than 2 just to be sure they are timestamps)
+
+            for maybe_timestamp in maybe_timestamps:
+                timestamps.append(Timestamp(maybe_timestamp[TIME_INDEX],maybe_timestamp[DESCRIPTION_INDEX]))
+
+
+        return timestamps
+
+    def get_milliseconds_from_hhmmss(self,time_str):
+
+        split_time =  time_str.split(':')
+
+        if len(split_time) == 3:
+            h, m, s = time_str.split(':')
+        else:
+            # Come on, it can only be hh:mm:ss or mm:ss.
+            h = 0
+            m, s = time_str.split(':')
+
+        return (int(h) * 3600 + int(m) * 60 + int(s))*1000
+
+    def parse_timestamp_selection(self,timestamps,timestamp_selection,logger):
+
+        # Return the correct TimeStamp object from the TimeStamp array or None if invalid (also print error)
+
+        if timestamp_selection == 0:
+            return None
+        else:
+            if timestamp_selection <= len(timestamps):
+                return timestamps[timestamp_selection-1]
+            else:
+                logger.error("Invalid timestamp id.")
+                return None
+
 
 
 def main(argv):
@@ -174,7 +246,6 @@ def main(argv):
     while current_index <= end_index:
         
         try:
-            # TODO: Remove second current_index (end_index) if it works
             data = ps.get_data(playlist_id,current_index)
         except youtube_dl.utils.DownloadError:
             # Can't download infos for this video, most of the times is geoblocked/private.
@@ -198,7 +269,7 @@ def main(argv):
             ps.logger.info("---------")
             selection = input(ps.AVAILABLE_COMMANDS)
 
-            if selection in ('p','P'):
+            if selection.lower() == 'p':
                 # Pause/Unpause player
                 if player.is_playing:
                     player.pause()
@@ -206,16 +277,16 @@ def main(argv):
                 else:
                     player.pause()
                     ps.logger.info("Player unpaused")
-            elif selection in ('s','S'):
+            elif selection.lower() == 's':
                 # Stop the player and closes the script
                 player.stop()
                 ps.logger.info("Player stopped!")
                 sys.exit()
-            elif selection in ('n','N'):
+            elif selection.lower() == 'n':
                 # Next track (stop the player and skip this iteration)
                 player.pause()
                 break
-            elif selection in ('d','D'):
+            elif selection.lower() == 'd':
                 ps.logger.debug(data.description)
             elif selection == '++':
                 player.audio_set_volume(player.audio_get_volume() + 10)
@@ -229,7 +300,7 @@ def main(argv):
             elif selection == '-':
                 player.audio_set_volume(player.audio_get_volume() - 1)
                 ps.logger.info(f"Volume -1 [{player.audio_get_volume()}]")
-            elif selection in ('c','C'):
+            elif selection.lower() == 'c':
                 # Display current status (current track, time)
                 # Is it paused/stopped?
                 status = 'Playing' if player.is_playing() else 'Paused/Stopped'
@@ -249,17 +320,83 @@ def main(argv):
             elif selection == '<<':
                 # Seek backwards 1 minute
                 player.set_time(player.get_time() - 60000)
-            elif selection == 't':
-                # Shows timestamps
+            elif selection.lower() == 'tu':
+                # Shows timestamps by uploader
+                timestamps = ps.utils.search_for_timestamps_comments(data.video_id,data.uploader)
 
-                # comments_downloader = YoutubeCommentsDownloader.Downloader()
-                # comments = comments_downloader.get_comments('y8F1Poye3BI')
-                #  ps.utils.search_for_timestamps(data.video_id)
-                # ps.logger.info(comments)
+                if len(timestamps) > 0:
+                    print("0) Cancel")
+                    for i in range(len(timestamps)):
+                        print(f"{i+1}) {timestamps[i].time}: {timestamps[i].description}")
+                else:
+                    ps.logger.info(f"No timestamps found posted by {data.uploader} in the first 50 comments")
+                    continue
 
-                ps.logger.debug("[WIP]")
+                try:
+                    timestamp_selection = int(input("Seek to timestamp number: "))
+                except ValueError:
+                    ps.logger.error("Invalid timestamp id (not a number)")
+                    continue
 
-                time.sleep(3)
+                selected_timestamp = ps.utils.parse_timestamp_selection(timestamps,timestamp_selection,ps.logger)
+
+                if selected_timestamp is not None:
+                    ps.logger.info(f"Seeking to {selected_timestamp.description}")
+                    player.set_time(ps.utils.get_milliseconds_from_hhmmss(selected_timestamp.time))
+                    time.sleep(1)
+                else:
+                    continue                
+            elif selection.lower() == 'tc':
+                # Shows timestamps by users in the comments
+                timestamps = ps.utils.search_for_timestamps_comments(data.video_id,data.uploader,False)
+
+                if len(timestamps) > 0:
+                    print("0) Cancel")
+                    for i in range(len(timestamps)):
+                        print(f"{i+1}) {timestamps[i].time}: {timestamps[i].description}")
+                else:
+                    ps.logger.info(f"No timestamps posted by users found in the first 50 comments")
+                    continue
+
+                try:
+                    timestamp_selection = int(input("Seek to timestamp number: "))
+                except ValueError:
+                    ps.logger.error("Invalid timestamp id (not a number)")
+                    continue
+
+                selected_timestamp = ps.utils.parse_timestamp_selection(timestamps,timestamp_selection,ps.logger)
+
+                if selected_timestamp is not None:
+                    ps.logger.info(f"Seeking to {selected_timestamp.description}")
+                    player.set_time(ps.utils.get_milliseconds_from_hhmmss(selected_timestamp.time))
+                    time.sleep(1)
+                else:
+                    continue    
+            elif selection.lower() == 'td':
+                # Shows timestamps by users in the comments
+                timestamps = ps.utils.search_for_timestamps_description(data.description)
+
+                if len(timestamps) > 0:
+                    print("0) Cancel")
+                    for i in range(len(timestamps)):
+                        print(f"{i+1}) {timestamps[i].time}: {timestamps[i].description}")
+                else:
+                    ps.logger.info(f"No timestamps found in the video description")
+                    continue
+                try:
+                    timestamp_selection = int(input("Seek to timestamp number: "))
+                except ValueError:
+                    ps.logger.error("Invalid timestamp id (not a number)")
+                    continue
+
+                selected_timestamp = ps.utils.parse_timestamp_selection(timestamps,timestamp_selection,ps.logger)
+
+                if selected_timestamp is not None:
+                    ps.logger.info(f"Seeking to {selected_timestamp.description}")
+                    player.set_time(ps.utils.get_milliseconds_from_hhmmss(selected_timestamp.time))
+                    time.sleep(1)
+                else:
+                    continue    
             else:
                 ps.logger.info(f"Unknown command {selection}")
             pass
