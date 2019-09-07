@@ -13,7 +13,7 @@ from unidecode import unidecode
 
 class PlaylistStream:
 
-    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\nt: Search for timestamps\ntu: Seek to timestamp (posted by uploader in the comments)\ntd: Seek to timestamp (posted by uploader in the video description)\ntc: Seek to timestamp (posted by users in the comments)\n\nCommand: "
+    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\nt: Search for timestamps (official YouTube API)\ntu: Seek to timestamp (posted by uploader in the comments)\ntd: Seek to timestamp (posted by uploader in the video description)\ntc: Seek to timestamp (posted by users in the comments)\ntld: Seek to track (shows tracklist searching in the video description)\ntlc: Seek to track (shows tracklist searching in the comments)\n\nCommand: "
     logger = None
 
     def __init__(self):
@@ -25,8 +25,8 @@ class PlaylistStream:
         logging.basicConfig(format='%(asctime)s - [%(levelname)s]: %(message)s', level=logging.DEBUG)
         self.logger.addHandler(fh)
         self.utils = Utils()
-        
-    def get_data(self,playlist_id,video_index):
+
+    def get_data(self,playlist_id,video_index,logger):
 
         options = {'outtmpl': '%(id)s%(ext)s'}
 
@@ -49,7 +49,8 @@ class PlaylistStream:
                 raise IndexError("No results found. Starting/Ending index not in video count")
         else:
             # The URL is for a single video, not a playlist.
-            raise Exception("The URL given is not a playlist")
+            video = result
+            logger.info("URL given is a video. Ignoring starting and ending indexes")
 
         description = self.utils.remove_non_ascii(video['description'])
         title = self.utils.remove_non_ascii(video['title'])
@@ -57,18 +58,24 @@ class PlaylistStream:
         duration = self.utils.convert_time(video['duration'])
         video_id = video['id']
 
+        chapters = []
+
+        for chapter in video['chapters']:
+            #print(f"{chapter['start_time']}")
+            chapters.append(Timestamp(chapter['start_time'],chapter['title']))
+
         for video_format in video['formats']:
             if video_format['format_id'] == '140':
                 # 140 is m4a audio format.
                 url = video_format['url']
-                audio_data = AudioData(title,uploader,description,duration,url,video_id)
+                audio_data = AudioData(title,uploader,description,duration,url,video_id,chapters)
                 return audio_data
 
         return None
 
 class AudioData:
 
-    def __init__(self,title,uploader,description,duration,url,video_id):
+    def __init__(self,title,uploader,description,duration,url,video_id,chapters):
 
         self.title = title
         self.uploader = uploader
@@ -76,6 +83,7 @@ class AudioData:
         self.duration = duration
         self.url = url
         self.video_id = video_id
+        self.chapters = chapters
         return
 
 class Timestamp:
@@ -107,12 +115,16 @@ class Utils:
     def remove_non_ascii(self,text):
         return unidecode(str(text))
 
-    def search_for_timestamps_comments(self,video_id,video_uploader,by_uploader=True):
+    def search_for_timestamps_comments(self,video_id,video_uploader,by_uploader=True,is_tracklist = False):
 
         """Searches for timestamps in the comments. If by_uploader = True accepts only timestamps posted by the video uploader"""
 
-        TIME_INDEX = 0
-        DESCRIPTION_INDEX = 1
+        if is_tracklist:
+            DESCRIPTION_INDEX = 0
+            TIME_INDEX = 1
+        else:
+            TIME_INDEX = 0
+            DESCRIPTION_INDEX = 1
 
         timestamps = []
         comments_downloader = YoutubeCommentsDownloader.Downloader()
@@ -130,7 +142,10 @@ class Utils:
             # or
             # (mm:ss description)
 
-            maybe_timestamps = re.findall(r'((?:(?:\d+:)?\d+)?:\d+)\s?(.+)\n?',text)
+            if is_tracklist:
+                maybe_timestamps = re.findall(r'(.+?)((?:(?:\d+:)?\d+)?:\d+)\n?',text)
+            else:
+                maybe_timestamps = re.findall(r'((?:(?:\d+:)?\d+)?:\d+)\s?(.+)\n?',text)
 
             if len(maybe_timestamps) > 2:
                 # Found timestamps (more than 2 just to be sure they are timestamps)
@@ -149,12 +164,16 @@ class Utils:
 
         return timestamps
 
-    def search_for_timestamps_description(self,video_description):
+    def search_for_timestamps_description(self,video_description,is_tracklist = False):
 
         """Searches for timestamps in the video description."""
 
-        TIME_INDEX = 0
-        DESCRIPTION_INDEX = 1
+        if is_tracklist:
+            DESCRIPTION_INDEX = 0
+            TIME_INDEX = 1
+        else:
+            TIME_INDEX = 0
+            DESCRIPTION_INDEX = 1
 
         # Finds timestamp with the following formats 
         # hh:mm:ss description 
@@ -162,7 +181,11 @@ class Utils:
         # (mm:ss description)
 
         timestamps = []
-        maybe_timestamps = re.findall(r'((?:(?:\d+:)?\d+)?:\d+)\s?(.+)\n?',video_description)
+
+        if is_tracklist:
+            maybe_timestamps = re.findall(r'(.+?)((?:(?:\d+:)?\d+)?:\d+)\n?',video_description)
+        else:
+            maybe_timestamps = re.findall(r'((?:(?:\d+:)?\d+)?:\d+)\s?(.+)\n?',video_description)
 
         if len(maybe_timestamps) > 2:
             # Found timestamps (more than 2 just to be sure they are timestamps)
@@ -172,6 +195,7 @@ class Utils:
 
 
         return timestamps
+
 
     def get_milliseconds_from_hhmmss(self,time_str):
 
@@ -204,7 +228,7 @@ class Utils:
 def main(argv):
 
     parser = argparse.ArgumentParser(argv)
-    parser.add_argument("-p", help="The youtube playlist URL", type=str)
+    parser.add_argument("-p", help="The youtube playlist/video URL", type=str)
     parser.add_argument("-s", help="Starting index (play videos after this number)", type=int)
     parser.add_argument("-e", help="Ending index (play videos before this number)", type=int)
     parser.add_argument("-v", help="Starting volume (from 0 to 200)", type=int)
@@ -212,16 +236,25 @@ def main(argv):
     args = parser.parse_args()
 
     if args.p is None:
-        raise Exception("No playlist URL specified")
+        raise Exception("No playlist/video URL specified")
 
     playlist_id = args.p
 
+    # Initialize objects (utilities and main object)
+    ps = PlaylistStream()
+
     if args.s is None:
         start_index = 0
+        ps.logger.info("No starting index specified, starting from the first/only video")
     else:
         start_index = args.s
 
-    end_index = args.e
+    if args.e is None:
+        ps.logger.info("No ending index specified, stopping after first video")
+        end_index = 0
+    else:
+        end_index = args.e
+
     current_index = start_index
 
     if end_index is not None:
@@ -236,9 +269,6 @@ def main(argv):
         starting_volume = 100
 
 
-    # Initialize objects (utilities and main object)
-    ps = PlaylistStream()
-
     # Initialize VLC player.
     player = vlc.MediaPlayer() 
     player.audio_set_volume(starting_volume)
@@ -246,7 +276,7 @@ def main(argv):
     while current_index <= end_index:
         
         try:
-            data = ps.get_data(playlist_id,current_index)
+            data = ps.get_data(playlist_id,current_index,ps.logger)
         except youtube_dl.utils.DownloadError:
             # Can't download infos for this video, most of the times is geoblocked/private.
             ps.logger.warning(f"Skipping index {current_index} because the video is private or unknown error!")
@@ -271,12 +301,8 @@ def main(argv):
 
             if selection.lower() == 'p':
                 # Pause/Unpause player
-                if player.is_playing:
-                    player.pause()
-                    ps.logger.info("Player paused")
-                else:
-                    player.pause()
-                    ps.logger.info("Player unpaused")
+                player.pause()
+                ps.logger.info("Toggled pause")
             elif selection.lower() == 's':
                 # Stop the player and closes the script
                 player.stop()
@@ -320,6 +346,37 @@ def main(argv):
             elif selection == '<<':
                 # Seek backwards 1 minute
                 player.set_time(player.get_time() - 60000)
+            elif selection.lower() == 't':
+
+                # Gets chapters from YouTube API (or is it a youtube_dl functionality)?
+                # Some videos do not have this parameter so I'll keep the other functions (get from description, comments, comments by uploader)
+
+                timestamps = data.chapters
+
+                if len(timestamps) > 0:
+                    print("0) Cancel")
+                    for i in range(len(timestamps)):
+                        print(f"{i+1}) {ps.utils.convert_time(timestamps[i].time)}: {timestamps[i].description}")
+                else:
+                    ps.logger.info(f"No timestamps found posted by {data.uploader} in the first 50 comments")
+                    continue
+
+                try:
+                    timestamp_selection = int(input("Seek to timestamp number: "))
+                except ValueError:
+                    ps.logger.error("Invalid timestamp id (not a number)")
+                    continue
+
+                selected_timestamp = ps.utils.parse_timestamp_selection(timestamps,timestamp_selection,ps.logger)
+
+                if selected_timestamp is not None:
+                    ps.logger.info(f"Seeking to {selected_timestamp.description}")
+                    # Chapters are in seconds float/double, we don't need decimals and we need milliseconds for VLC set_time function
+                    vlc_converted_time = int(selected_timestamp.time) * 1000
+                    player.set_time(vlc_converted_time)
+                    time.sleep(1)
+                else:
+                    continue          
             elif selection.lower() == 'tu':
                 # Shows timestamps by uploader
                 timestamps = ps.utils.search_for_timestamps_comments(data.video_id,data.uploader)
@@ -397,6 +454,57 @@ def main(argv):
                     time.sleep(1)
                 else:
                     continue    
+            elif selection.lower() == 'tlc':
+                # Shows timestamps by users in the comments
+                timestamps = ps.utils.search_for_timestamps_comments(data.video_id,data.uploader,False,True)
+
+                if len(timestamps) > 0:
+                    print("0) Cancel")
+                    for i in range(len(timestamps)):
+                        print(f"{i+1}) {timestamps[i].time}: {timestamps[i].description}")
+                else:
+                    ps.logger.info(f"No timestamps posted by users found in the first 50 comments")
+                    continue
+
+                try:
+                    timestamp_selection = int(input("Seek to timestamp number: "))
+                except ValueError:
+                    ps.logger.error("Invalid timestamp id (not a number)")
+                    continue
+
+                selected_timestamp = ps.utils.parse_timestamp_selection(timestamps,timestamp_selection,ps.logger)
+
+                if selected_timestamp is not None:
+                    ps.logger.info(f"Seeking to {selected_timestamp.description}")
+                    player.set_time(ps.utils.get_milliseconds_from_hhmmss(selected_timestamp.time))
+                    time.sleep(1)
+                else:
+                    continue
+            elif selection.lower() == 'tld':
+                # Shows timestamps by users in the comments
+                timestamps = ps.utils.search_for_timestamps_description(data.description,True)
+
+                if len(timestamps) > 0:
+                    print("0) Cancel")
+                    for i in range(len(timestamps)):
+                        print(f"{i+1}) {timestamps[i].time}: {timestamps[i].description}")
+                else:
+                    ps.logger.info(f"No timestamps found in the video description")
+                    continue
+                try:
+                    timestamp_selection = int(input("Seek to timestamp number: "))
+                except ValueError:
+                    ps.logger.error("Invalid timestamp id (not a number)")
+                    continue
+
+                selected_timestamp = ps.utils.parse_timestamp_selection(timestamps,timestamp_selection,ps.logger)
+
+                if selected_timestamp is not None:
+                    ps.logger.info(f"Seeking to {selected_timestamp.description}")
+                    player.set_time(ps.utils.get_milliseconds_from_hhmmss(selected_timestamp.time))
+                    time.sleep(1)
+                else:
+                    continue 
             else:
                 ps.logger.info(f"Unknown command {selection}")
             pass
