@@ -59,14 +59,16 @@ class PlaylistStream:
         video_id = video['id']
 
         chapters = []
+        if video['chapters'] is not None:
 
-        for chapter in video['chapters']:
-            #print(f"{chapter['start_time']}")
-            chapters.append(Timestamp(chapter['start_time'],chapter['title']))
+            # Check if the video has embedded timestamps (chapters)
+
+            for chapter in video['chapters']:
+                chapters.append(Timestamp(chapter['start_time'],chapter['title']))
 
         for video_format in video['formats']:
             if video_format['format_id'] == '140':
-                # 140 is m4a audio format.
+                # 140 is the m4a audio format.
                 url = video_format['url']
                 audio_data = AudioData(title,uploader,description,duration,url,video_id,chapters)
                 return audio_data
@@ -244,14 +246,14 @@ def main(argv):
     ps = PlaylistStream()
 
     if args.s is None:
-        start_index = 0
+        start_index = 1
         ps.logger.info("No starting index specified, starting from the first/only video")
     else:
         start_index = args.s
 
     if args.e is None:
         ps.logger.info("No ending index specified, stopping after first video")
-        end_index = 0
+        end_index = 1
     else:
         end_index = args.e
 
@@ -331,8 +333,9 @@ def main(argv):
                 # Is it paused/stopped?
                 status = 'Playing' if player.is_playing() else 'Paused/Stopped'
                 elapsed = ps.utils.convert_time_ms(player.get_time())
+                current_volume = player.audio_get_volume()
                 print(f"\n{status} {data.title}\n")
-                print(f"{elapsed} / {data.duration}\n")
+                print(f"{elapsed} / {data.duration} [{current_volume}]\n")
                 time.sleep(1)
             elif selection == '>':
                 # Seek forward 10 seconds
