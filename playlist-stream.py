@@ -13,7 +13,28 @@ from unidecode import unidecode
 
 class PlaylistStream:
 
-    AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\nt: Search for timestamps (official YouTube API)\ntu: Seek to timestamp (posted by uploader in the comments)\ntd: Seek to timestamp (posted by uploader in the video description)\ntc: Seek to timestamp (posted by users in the comments)\ntld: Seek to track (shows tracklist searching in the video description)\ntlc: Seek to track (shows tracklist searching in the comments)\n\nCommand: "
+    AVAILABLE_COMMANDS = {
+        'p':'Pause/Unpause',
+        's':'Stop',
+        'b':'Previous track',
+        'n':'Next track',
+        '++':'Volume +10',
+        '+':'Volume +1',
+        '--':'Volume -10',
+        '-':'Volume -1',
+        'c':'Current status',
+        '>':'Seek forward 10 seconds',
+        '>>':'Seek forward 1 minute',
+        '<':'Seek backwards 10 seconds',
+        '<<':'Seek backwards 1 minute',
+        't':'Search for timestamps (official YouTube API)',
+        'tu':'Seek to timestamp (posted by uploader in the comments)',
+        'td':'Seek to timestamp (posted by uploader in the video description)',
+        'tc':'Seek to timestamp (posted by users in the comments)',
+        'tld':'Seek to track (shows tracklist searching in the video description)',
+        'tlc':'Seek to track (shows tracklist searching in the comments)'
+        }
+    #AVAILABLE_COMMANDS = "\np: Pause/Unpause\ns: Stop\nn: Next track\n++: Volume +10\n+: Volume +1\n--: Volume -10\n-: Volume -1\nc: Current status\n>: Seek forward 10 seconds\n>>: Seek forward 1 minute\n<: Seek backwards 1 second\n<<: Seek backwards 1 minute\n   # t: Search for timestamps (official YouTube API)\ntu: Seek to timestamp (posted by uploader in the comments)\ntd: Seek to timestamp (posted by uploader in the video description)\n    # tc: Seek to timestamp (posted by users in the comments)\ntld: Seek to track (shows tracklist searching in the video description)\ntlc: Seek to track (shows tracklist searching in the comments)\n\nCommand: "
     logger = None
 
     def __init__(self):
@@ -291,7 +312,6 @@ def main(argv):
         player.set_mrl(data.url)
         player.play()
 
-
         while player.is_playing:
 
             time.sleep(1)
@@ -299,7 +319,14 @@ def main(argv):
             ps.logger.info("---------")
             ps.logger.info(f"Currently playing {data.title} by {data.uploader} [{data.duration}]")   
             ps.logger.info("---------")
-            selection = input(ps.AVAILABLE_COMMANDS)
+
+            # Display available comments
+
+            for command in ps.AVAILABLE_COMMANDS:
+                print(f"{command}: {ps.AVAILABLE_COMMANDS[command]}")
+
+            #selection = input(ps.AVAILABLE_COMMANDS)
+            selection = input("Command: ")
 
             if selection.lower() == 'p':
                 # Pause/Unpause player
@@ -310,12 +337,18 @@ def main(argv):
                 player.stop()
                 ps.logger.info("Player stopped!")
                 sys.exit()
+            elif selection.lower() == 'b':
+                # We subtract 2 because when exiting the loop current_index will be increased by 1.
+                current_index -= 2
+                if current_index == 0:
+                    # Prevent invalid index (can't go back from the first track)
+                    current_index = 1
+                player.pause()
+                break
             elif selection.lower() == 'n':
                 # Next track (stop the player and skip this iteration)
                 player.pause()
                 break
-            elif selection.lower() == 'd':
-                ps.logger.debug(data.description)
             elif selection == '++':
                 player.audio_set_volume(player.audio_get_volume() + 10)
                 ps.logger.info(f"Volume +10 [{player.audio_get_volume()}]")
